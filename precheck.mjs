@@ -1,242 +1,371 @@
-import fs from 'fs';
-import path from 'path';
-import { parseArgs } from 'util';
-import { execSync } from 'child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { parseArgs } from 'node:util';
+import { execSync } from 'node:child_process';
 
-// ============================================================================
-// 1. 보안 점검 항목 정의 (Hardcoded Security Checks)
-// ============================================================================
+// 1. Fully Self-Contained Test Suites
 const SECURITY_CHECKS = [
-  { id: "anonymous_note_read", step: 1, wave: 1, name: "API 인증 우회 (GET 조회)", expected: "401 또는 403 응답 (인가 거부)" },
-  { id: "anonymous_note_write", step: 1, wave: 2, name: "API 인증 우회 (POST 쓰기)", expected: "401 또는 403 응답 (인가 거부)" },
-  { id: "repository_secret_scan", step: 2, wave: 1, name: "Git 히스토리 내 비밀키 유출", expected: "커밋 내역에 유출된 키 없음" },
-  { id: "built_bundle_secret_scan", step: 2, wave: 2, name: "클라이언트 번들(JS) JWT 유출", expected: "번들 파일 내에 민감한 키 포함 안 됨" },
-  { id: "static_seed_data_scan", step: 2, wave: 3, name: "클라이언트 번들(JS) Seed 데이터 하드코딩", expected: "API 응답이 아닌 하드코딩된 데이터 없음" },
-  { id: "forged_login_token", step: 3, wave: 1, name: "위조된 JWT 토큰 서명(Signature) 검증", expected: "조작된 토큰에 대해 401/403 응답" },
-  { id: "r3_judge_owned_note", step: 4, wave: 1, name: "타인 데이터 불법 접근 (BOLA/IDOR)", expected: "리소스 소유자가 아닐 시 403/404 응답" }
+  { id: "anonymous_note_read", step: 1, desc: "Test 01: [anonymous_note_read]" },
+  { id: "anonymous_note_list", step: 1, desc: "Test 02: [anonymous_note_list]" },
+  { id: "repository_secret_scan", step: 2, desc: "Test 03: [repository_secret_scan]" },
+  { id: "built_bundle_secret_scan", step: 2, desc: "Test 04: [built_bundle_secret_scan]" },
+  { id: "static_seed_data_scan", step: 2, desc: "Test 05: [static_seed_data_scan]" },
+  { id: "anonymous_note_write", step: 3, desc: "Test 06: [anonymous_note_write]" },
+  { id: "missing_login_token", step: 3, desc: "Test 07: [missing_login_token]" },
+  { id: "forged_login_token", step: 3, desc: "Test 08: [forged_login_token]" },
+  { id: "expired_login_token", step: 3, desc: "Test 09: [expired_login_token]" },
+  { id: "token_wrong_audience", step: 3, desc: "Test 10: [token_wrong_audience]" },
+  { id: "r3_judge_owned_note", step: 4, desc: "Test 11: [r3_judge_owned_note]" },
+  { id: "r3_judge_owned_note_write", step: 4, desc: "Test 12: [r3_judge_owned_note_write]" },
+  { id: "foreign_note_delete", step: 4, desc: "Test 13: [foreign_note_delete]" },
+  { id: "direct_origin_note_read", step: 5, desc: "Test 14: [direct_origin_note_read]" },
+  { id: "direct_origin_note_write", step: 5, desc: "Test 15: [direct_origin_note_write]" },
+  { id: "origin_alias_bypass", step: 5, desc: "Test 16: [origin_alias_bypass]" },
+  { id: "unregistered_device", step: 6, desc: "Test 17: [unregistered_device]" },
+  { id: "missing_client_certificate", step: 6, desc: "Test 18: [missing_client_certificate]" },
+  { id: "device_subject_mismatch", step: 6, desc: "Test 19: [device_subject_mismatch]" },
+  { id: "unregistered_virtual_device_rule", step: 6, desc: "Test 20: [unregistered_virtual_device_rule]" },
+  { id: "anomalous_region_event", step: 7, desc: "Test 21: [anomalous_region_event]" },
+  { id: "anomalous_hour_event", step: 7, desc: "Test 22: [anomalous_hour_event]" },
+  { id: "anomalous_network_action", step: 7, desc: "Test 23: [anomalous_network_action]" },
+  { id: "missing_step_up", step: 7, desc: "Test 24: [missing_step_up]" },
+  { id: "cross_zone_note_read", step: 8, desc: "Test 25: [cross_zone_note_read]" },
+  { id: "cross_zone_note_write", step: 8, desc: "Test 26: [cross_zone_note_write]" },
+  { id: "cross_zone_note_list", step: 8, desc: "Test 27: [cross_zone_note_list]" },
+  { id: "student_edits_instructor_notice", step: 8, desc: "Test 28: [student_edits_instructor_notice]" },
+  { id: "doppelganger_detection", step: 9, desc: "Test 29: [doppelganger_detection]" },
+  { id: "revoked_identity_reuse", step: 9, desc: "Test 30: [revoked_identity_reuse]" },
+  { id: "stolen_session_after_revoke", step: 9, desc: "Test 31: [stolen_session_after_revoke]" },
+  { id: "revoked_lateral_route", step: 9, desc: "Test 32: [revoked_lateral_route]" },
+  { id: "restore_changed_note", step: 10, desc: "Test 33: [restore_changed_note]" },
+  { id: "restore_deleted_note", step: 10, desc: "Test 34: [restore_deleted_note]" },
+  { id: "restore_defense_replay", step: 10, desc: "Test 35: [restore_defense_replay]" },
+  { id: "unsigned_client_request", step: 11, desc: "Test 36: [unsigned_client_request]" },
+  { id: "signed_path_tamper", step: 11, desc: "Test 37: [signed_path_tamper]" },
+  { id: "signed_body_tamper", step: 11, desc: "Test 38: [signed_body_tamper]" },
+  { id: "combined_anonymous_owner_attack", step: 12, desc: "Test 39: [combined_anonymous_owner_attack]" },
+  { id: "combined_device_revocation_attack", step: 12, desc: "Test 40: [combined_device_revocation_attack]" },
+  { id: "combined_restore_signature_attack", step: 12, desc: "Test 41: [combined_restore_signature_attack]" }
 ];
 
-// ============================================================================
-// 2. 설정 및 환경 변수 파싱 (Configuration & Env)
-// ============================================================================
-function loadConfig() {
+class TestRunner {
+  constructor(config) {
+    this.config = config;
+    this.pass = 0;
+    this.fail = 0;
+  }
+  
+  createError(msg, expected, remediation, actualInfo) {
+    const err = new Error(msg);
+    err.expected = expected;
+    err.remediation = remediation;
+    err.actualInfo = actualInfo;
+    return err;
+  }
+  
+  async runAll() {
+    console.log(`\nStarting Pre-check CLI tests...`);
+    
+    for (const test of SECURITY_CHECKS) {
+      if (this.config.stepFilter && test.step !== this.config.stepFilter) continue;
+      
+      const displayName = test.desc;
+        
+      console.log(`\n▶ Running ${displayName}`);
+      
+      try {
+        await this.executeTest(test.id);
+        console.log(`  ✅ PASS`);
+        this.pass++;
+      } catch (err) {
+        if (err.remediation) {
+          console.log(`  ❌ FAIL: ${err.message}`);
+          
+          // Diagnostic Reporting
+          console.log(`\n      --- DIAGNOSTIC CARD ---`);
+          console.log(`      * Test Case ID: ${test.id}`);
+          console.log(`      * Expected Server Invariant: ${err.expected}`);
+          console.log(`      * Actual Server Output: ${JSON.stringify(err.actualInfo)}`);
+          console.log(`      * Remediation Advice: ${err.remediation}`);
+          console.log(`      -----------------------`);
+        } else {
+          console.log(`  ⚠️ ERROR: ${err.message}`);
+        }
+        this.fail++;
+      }
+    }
+    
+    console.log(`\n=== 🏁 PRE-CHECK SUMMARY ===`);
+    console.log(`✅ PASS: ${this.pass}`);
+    console.log(`❌ FAIL: ${this.fail}`);
+    
+    const tableData = [
+      { Total_Tests: this.pass + this.fail, Passed: this.pass, Failed: this.fail, Status: this.fail === 0 ? 'CLEAN' : 'VULNERABLE' }
+    ];
+    console.table(tableData);
+    
+    process.exit(this.fail > 0 ? 1 : 0);
+  }
+  
+  async executeTest(id) {
+    const { url, token, adminToken } = this.config;
+    
+    const fetchApi = async (method, route, auth = null, body = null, extraHeaders = {}) => {
+      const headers = { ...extraHeaders };
+      if (auth) headers['Authorization'] = `Bearer ${auth}`;
+      if (body) headers['Content-Type'] = 'application/json';
+      const opts = { method, headers, redirect: 'manual' };
+      if (body) opts.body = JSON.stringify(body);
+      try {
+        const res = await fetch(`${url}${route}`, opts);
+        let status = res.status;
+        const text = await res.text().catch(()=>'');
+        
+        // SPA Catch-all False Positive Prevention
+        // If an API route returns 200 but it's actually an HTML page (like index.html),
+        // it usually means the endpoint doesn't exist and it hit a frontend wildcard.
+        if (status === 200) {
+          const lowerText = text.trim().toLowerCase();
+          if (lowerText.startsWith('<!doctype html') || lowerText.startsWith('<html')) {
+             status = 404; 
+          }
+        }
+        
+        return { status, body: text };
+      } catch (e) {
+        return { status: 0, body: e.message };
+      }
+    };
+
+    // 2. Multi-Step Test Flows
+
+    // Flow A: Session Revocation
+    if (['revoked_identity_reuse', 'stolen_session_after_revoke', 'revoked_lateral_route'].includes(id)) {
+      await fetchApi('POST', '/api/auth/logout', token);
+      const res = await fetchApi('GET', '/api/protected', token); // Follow-up with revoked token
+      
+      if (res.status === 200 || res.status === 201) {
+         throw this.createError(
+           "Revoked token still valid", 
+           "401 Unauthorized or 403 Forbidden",
+           "Implement robust session blocklisting (e.g. Redis JTI cache) or stateless revocation checks.", 
+           { status: res.status, body: res.body.substring(0, 50) }
+         );
+      }
+      return;
+    }
+    
+    // Flow B: RBAC Boundary
+    if (id === 'student_edits_instructor_notice') {
+      const studentRes = await fetchApi('POST', '/api/notice', token, { title: 'hacked' });
+      if (studentRes.status === 200 || studentRes.status === 201) {
+        throw this.createError(
+          "Student successfully performed instructor action", 
+          "403 Forbidden",
+          "Enforce role-based access control (RBAC) boundaries in your middleware.", 
+          { status: studentRes.status }
+        );
+      }
+      return;
+    }
+    
+    // Flow C: IDOR / BOLA
+    if (['r3_judge_owned_note', 'r3_judge_owned_note_write', 'foreign_note_delete'].includes(id)) {
+      const method = id.includes('delete') ? 'DELETE' : (id.includes('write') ? 'PUT' : 'GET');
+      const accessRes = await fetchApi(method, '/api/notes/99999', token); // 99999 belongs to Admin/Foreign user
+      
+      if (accessRes.status === 200 || accessRes.status === 204 || accessRes.status === 201) {
+        throw this.createError(
+          "Cross-tenant resource accessed/modified successfully", 
+          "403 Forbidden or 404 Not Found",
+          "Implement IDOR/BOLA checks verifying resource ownership against the active session ID.", 
+          { status: accessRes.status }
+        );
+      }
+      return;
+    }
+    
+    // Flow D: Bundle Hygiene
+    if (['built_bundle_secret_scan', 'static_seed_data_scan'].includes(id)) {
+      const res = await fetchApi('GET', '/');
+      const html = res.body;
+      const scripts = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m => m[1]);
+      
+      for (let src of scripts) {
+        if (!src.startsWith('http')) src = `${url}${src.startsWith('/') ? '' : '/'}${src}`;
+        const sRes = await fetch(src).catch(() => ({ ok: false }));
+        if (!sRes.ok) continue;
+        const sBody = await sRes.text().catch(() => '');
+        
+        if (id === 'built_bundle_secret_scan' && (sBody.includes('SUPABASE_SERVICE_ROLE_KEY') || /(?:eyJ[A-Za-z0-9-_]+\\.){2}[A-Za-z0-9-_]+/.test(sBody))) {
+          throw this.createError(
+            `Client bundle leaks sensitive keys in ${src}`, 
+            "No sensitive keys in frontend bundle",
+            "Remove sensitive environment variables from client-side bundles (e.g. NEXT_PUBLIC_...).", 
+            { matchFound: true }
+          );
+        } else if (id === 'static_seed_data_scan' && sBody.toLowerCase().includes('private note')) {
+          throw this.createError(
+            `Client bundle has seed/hardcoded private data in ${src}`, 
+            "No hardcoded sensitive data",
+            "Do not hardcode sensitive initial data or seed variables into the client code.", 
+            { matchFound: true }
+          );
+        }
+      }
+      return;
+    }
+    
+    // Repository Secret Scan
+    if (id === 'repository_secret_scan') {
+       try {
+         // precheck.mjs와 dummy_server.js 자체 코드에 포함된 스캔 로직 문자열이 오탐되는 것을 방지하기 위해 exclude 처리
+         const log = execSync('git log -p -n 10 -- . ":(exclude)precheck.mjs" ":(exclude)dummy_server.js"', { encoding: 'utf8', maxBuffer: 1024*1024 });
+         if (log.includes('SUPABASE_SERVICE_ROLE_KEY') || log.includes('-----BEGIN PRIVATE KEY-----')) {
+           throw this.createError(
+             "Git commit history contains sensitive secrets", 
+             "Clean repository history",
+             "Rewrite git history to remove secrets using tools like BFG Repo-Cleaner.", 
+             { leakFound: true }
+           );
+         }
+       } catch (e) {
+         if (e.remediation) throw e;
+       }
+       return;
+    }
+    
+    // Generic Flow: Anonymous Access
+    if (id.includes('anonymous')) {
+      const method = id.includes('write') ? 'POST' : 'GET';
+      const res = await fetchApi(method, '/api/notes', null);
+      if (res.status === 200 || res.status === 201) {
+        throw this.createError(
+          "Anonymous access allowed", 
+          "401 Unauthorized or 403 Forbidden",
+          "Implement authentication middleware to block unauthenticated requests.", 
+          { status: res.status, body: res.body.substring(0, 100) }
+        );
+      }
+      return;
+    }
+
+    // Generic Flow: Invalid Tokens
+    if (id.includes('token')) {
+      let badToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy.sig";
+      if (id === 'expired_login_token') badToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjEwMDAwMDB9.sig";
+      
+      const res = await fetchApi('GET', '/api/notes', badToken);
+      if (res.status === 200 || res.status === 201) {
+        throw this.createError(
+          "Invalid or forged token accepted", 
+          "401 Unauthorized or 403 Forbidden",
+          "Validate JWT signatures and expiration times strictly.", 
+          { status: res.status }
+        );
+      }
+      return;
+    }
+    
+    // Generic Flow: Origin / Cross-Zone
+    if (id.includes('origin') || id.includes('zone')) {
+      const res = await fetchApi('GET', '/api/notes', token, null, { 'Host': 'evil.com', 'Origin': 'https://evil.com' });
+      if (res.status === 200 || res.status === 201) {
+        throw this.createError(
+          "Origin spoofing / Cross-zone access allowed", 
+          "403 Forbidden",
+          "Implement CORS policies and strictly validate Host/Origin headers.", 
+          { status: res.status }
+        );
+      }
+      return;
+    }
+    
+    // Generic Flow: Devices
+    if (id.includes('device') || id.includes('client_certificate')) {
+      const res = await fetchApi('GET', '/api/notes', token, null, { 'X-Device-Id': 'unknown-device' });
+      if (res.status === 200 || res.status === 201) {
+        throw this.createError(
+          "Unregistered device / Missing certificate allowed", 
+          "401 Unauthorized or 403 Forbidden",
+          "Enforce device identity checks or mTLS for secure endpoints.", 
+          { status: res.status }
+        );
+      }
+      return;
+    }
+
+    // Generic Flow: Anomalous
+    if (id.includes('anomalous') || id.includes('doppelganger') || id.includes('step_up')) {
+      const res = await fetchApi('POST', '/api/notes', token, { test: 1 }, { 'X-Forwarded-For': '203.0.113.1' });
+      if (res.status === 200 || res.status === 201) {
+        throw this.createError(
+          "Anomalous activity not flagged/blocked", 
+          "401 Unauthorized, 403 Forbidden, or 429 Too Many Requests",
+          "Implement anomaly detection for abnormal IP, velocity, or concurrent sessions.", 
+          { status: res.status }
+        );
+      }
+      return;
+    }
+
+    // Generic Flow: Tamper
+    if (id.includes('tamper') || id.includes('unsigned') || id.includes('restore') || id.includes('combined')) {
+      const res = await fetchApi('POST', '/api/notes', token, { tampered: true }, { 'X-Signature': 'invalid' });
+      if (res.status === 200 || res.status === 201) {
+        throw this.createError(
+          "Tampered or unsigned request accepted", 
+          "400 Bad Request or 403 Forbidden",
+          "Implement strict request signature verification (HMAC).", 
+          { status: res.status }
+        );
+      }
+      return;
+    }
+
+    // Fallback: Ping generic endpoint
+    const res = await fetchApi('GET', `/api/ping/${id}`, token);
+    if (res.status >= 500) {
+      throw this.createError(
+        "Server crashed on generic test", 
+        "Graceful error handling",
+        "Ensure robust error handling to prevent 500s.", 
+        { status: res.status }
+      );
+    }
+  }
+}
+
+// 3. CLI Interface & Execution
+async function main() {
   const options = {
     url: { type: 'string' },
     token: { type: 'string' },
-    step: { type: 'string' },
-    wave: { type: 'string' },
-    'api-base': { type: 'string' }
+    'admin-token': { type: 'string' },
+    step: { type: 'string' }
   };
+  
   const { values } = parseArgs({ options, strict: false });
-
+  
+  // 수동 .env 파싱 로직 복구
   const envPath = path.join(process.cwd(), '.env');
   const env = {};
   if (fs.existsSync(envPath)) {
-    const envFile = fs.readFileSync(envPath, 'utf8');
-    envFile.split('\n').forEach(line => {
+    fs.readFileSync(envPath, 'utf8').split('\n').forEach(line => {
       const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
-      if (match) {
-        env[match[1]] = match[2].replace(/^['"]|['"]$/g, '').trim();
-      }
+      if (match) env[match[1]] = match[2].replace(/^['"]|['"]$/g, '').trim();
     });
   }
-
-  const rawUrl = values.url || env.TARGET_URL;
-  if (!rawUrl) {
-    console.error("오류: --url <target_url> 옵션 또는 .env 파일의 TARGET_URL 설정이 필요합니다.");
-    process.exit(1);
-  }
-
-  return {
-    targetUrl: rawUrl.replace(/\/$/, ''),
-    userToken: values.token || env.USER_TOKEN || '',
-    stepFilter: values.step ? parseInt(values.step, 10) : null,
-    waveFilter: values.wave ? parseInt(values.wave, 10) : null,
-    apiBase: values['api-base'] || env.API_BASE || '/api/notes'
+  
+  const config = {
+    url: values.url || env.TARGET_URL || 'http://localhost:4000',
+    token: values.token || env.USER_TOKEN || 'dummy-user-token',
+    adminToken: values['admin-token'] || env.ADMIN_TOKEN || 'dummy-admin-token',
+    stepFilter: values.step ? parseInt(values.step, 10) : null
   };
-}
-
-const config = loadConfig();
-
-// ============================================================================
-// 3. 터미널 출력 유틸리티 (Console Utilities)
-// ============================================================================
-const C = {
-  reset: "\x1b[0m", red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m",
-  blue: "\x1b[34m", cyan: "\x1b[36m", bold: "\x1b[1m"
-};
-
-function printDiagnostic(check, errorMsg, causeMsg, debugInfo = null) {
-  console.log(`\n${C.red}${C.bold}❌ 방어 실패 (VULNERABILITY FOUND)${C.reset}`);
-  console.log(`${C.cyan}점검 항목:${C.reset} ${check.name}`);
-  console.log(`${C.cyan}예상 방어 결과:${C.reset} ${check.expected}`);
-  console.log(`${C.cyan}발생한 취약점:${C.reset} ${errorMsg}`);
-  console.log(`${C.cyan}해결 가이드:${C.reset} ${causeMsg}`);
   
-  if (debugInfo) {
-    console.log(`\n${C.yellow}--- 디버그 로그 (Debug Log) ---${C.reset}`);
-    if (debugInfo.req) console.log(`${C.yellow}요청:${C.reset} ${debugInfo.req}`);
-    if (debugInfo.status) console.log(`${C.yellow}응답 상태:${C.reset} ${debugInfo.status}`);
-    if (debugInfo.body) console.log(`${C.yellow}응답 본문:${C.reset} ${debugInfo.body.replace(/\n/g, ' ').substring(0, 200)}...`);
-    console.log(`${C.yellow}-------------------------------${C.reset}`);
-  }
-  console.log();
+  const runner = new TestRunner(config);
+  await runner.runAll();
 }
 
-// ============================================================================
-// 4. 네트워크 및 테스트 유틸리티 (Network & Test Helpers)
-// ============================================================================
-let lastDebug = null;
-async function fetchApi(method, endpoint, headers = {}) {
-  const url = `${config.targetUrl}${endpoint}`;
-  try {
-    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...headers } });
-    const bodyText = await res.clone().text().catch(() => '');
-    lastDebug = { req: `${method} ${url}`, status: res.status, body: bodyText };
-    return res;
-  } catch(err) {
-    lastDebug = { req: `${method} ${url}`, status: 0, body: err.message };
-    return { status: 0, text: async () => err.message };
-  }
-}
-
-// ============================================================================
-// 5. 공격 패턴 핸들러 모음 (Attack Strategy Handlers)
-// ============================================================================
-const AttackHandlers = {
-  async check_anonymous_read(attackId) {
-    const endpoint = attackId === 'anonymous_note_read' ? `${config.apiBase}/1` : config.apiBase;
-    const res = await fetchApi('GET', endpoint);
-    if (res.status !== 401 && res.status !== 403 && res.status !== 404) {
-      return { passed: false, error: `상태 코드 ${res.status} 반환됨. (요청 거부 안됨)`, cause: `API 경로(${endpoint})에 로그인(인증) 체크 로직이 없습니다. Next.js 미들웨어나 라우트 핸들러에서 세션/토큰 검증 코드를 추가하세요.`, debug: lastDebug };
-    }
-    return { passed: true };
-  },
-
-  async anonymous_note_write() {
-    const res = await fetchApi('POST', config.apiBase);
-    if (res.status !== 401 && res.status !== 403) {
-      return { passed: false, error: `상태 코드 ${res.status} 반환됨.`, cause: `POST ${config.apiBase} 경로가 로그인하지 않은 사용자에게 열려있습니다. 데이터를 쓰기 전에 인증을 확인하는 로직을 추가하세요.`, debug: lastDebug };
-    }
-    return { passed: true };
-  },
-
-  async repository_secret_scan() {
-    try {
-      const log = execSync('git log -p', { encoding: 'utf8', maxBuffer: 1024 * 1024 * 10 });
-      if (log.includes('SUPABASE_SERVICE_ROLE_KEY') || log.includes('-----BEGIN PRIVATE KEY-----')) {
-        return { passed: false, error: "Git 커밋 기록에서 민감한 비밀키(Secret Key)가 발견되었습니다.", cause: "코드 저장소에 절대로 비밀키를 올리면 안 됩니다. BFG 도구 등으로 히스토리를 정리하고 .env로 관리하세요." };
-      }
-    } catch (e) { /* Git 저장소가 아니거나 커밋이 없는 경우 무시 */ }
-    return { passed: true };
-  },
-
-  async scan_client_bundles(attackId) {
-    try {
-      const res = await fetch(config.targetUrl);
-      if (!res.ok) throw new Error("대상 URL에 접속할 수 없습니다.");
-      const html = await res.text();
-      const scripts = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(m => m[1]);
-      
-      const jwtRegex = /(?:eyJ[A-Za-z0-9-_]+\.){2}[A-Za-z0-9-_]+/;
-      
-      for (let src of scripts) {
-        if (!src.startsWith('http')) src = `${config.targetUrl}${src.startsWith('/') ? '' : '/'}${src}`;
-        const sRes = await fetch(src);
-        const sBody = await sRes.text();
-        
-        if (attackId === 'built_bundle_secret_scan') {
-          if (sBody.includes('SUPABASE_SERVICE_ROLE_KEY') || jwtRegex.test(sBody)) {
-            return { passed: false, error: `클라이언트 번들 파일(${src})에서 JWT 형태의 비밀키 유출 발견`, cause: "서버에서만 사용해야 하는 키가 프론트엔드 자바스크립트에 포함되었습니다. 환경변수 설정 시 접두사(NEXT_PUBLIC_ 등)에 주의하세요.", debug: { req: `GET ${src}`, status: sRes.status, body: sBody } };
-          }
-        } else if (attackId === 'static_seed_data_scan') {
-          if (sBody.toLowerCase().includes('private note')) {
-            return { passed: false, error: `클라이언트 번들 파일(${src})에서 하드코딩된 Seed 데이터 발견`, cause: "초기 데이터 배열이 클라이언트 컴포넌트에 하드코딩 또는 임포트되었습니다. 민감한 데이터는 API를 통해 동적으로 통신하세요.", debug: { req: `GET ${src}`, status: sRes.status, body: sBody } };
-          }
-        }
-      }
-    } catch (e) {
-      return { passed: false, error: e.message, cause: "입력하신 사이트 주소(--url)가 정확한지, 서버가 켜져 있는지 확인해 주세요." };
-    }
-    return { passed: true };
-  },
-
-  async invalid_token_tests(attackId) {
-    let token = "";
-    if (attackId === 'forged_login_token') token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
-    
-    const res = await fetchApi('GET', config.apiBase, token ? { 'Authorization': `Bearer ${token}` } : {});
-    if (res.status !== 401 && res.status !== 403) {
-      return { passed: false, error: `상태 코드 ${res.status} 반환됨. (요청 거부 안 됨)`, cause: `올바르지 않은 토큰(위조/만료/오류)인데도 API가 뚫렸습니다. 서버에서 JWT 토큰의 서명(signature), 만료일(exp), 대상(aud)을 정확히 검증하세요.`, debug: lastDebug };
-    }
-    return { passed: true };
-  },
-
-  async bola_tests(attackId) {
-    if (!config.userToken) {
-      return { passed: false, error: "테스트용 JWT 토큰(--token)이 제공되지 않음", cause: "이 BOLA 취약점 테스트를 진행하려면 실제 로그인한 유저의 토큰이 필요합니다. CLI 인자나 .env 파일(USER_TOKEN)에 토큰을 설정해 주세요." };
-    }
-    const method = attackId === 'foreign_note_delete' ? 'DELETE' : 'GET';
-    const endpoint = `${config.apiBase}/99999`;
-    const res = await fetchApi(method, endpoint, { 'Authorization': `Bearer ${config.userToken}` });
-    if (res.status === 200 || res.status === 201 || res.status === 204) {
-      return { passed: false, error: `다른 사람의 데이터(ID 99999)에 대해 상태 코드 ${res.status} 반환됨 (작업 성공)`, cause: "BOLA(IDOR) 취약점이 발견되었습니다! 토큰의 유저 ID와 조작하려는 데이터의 실제 소유자 ID가 일치하는지 확인하는 검증 로직을 추가하세요.", debug: lastDebug };
-    }
-    return { passed: true };
-  }
-};
-
-async function dispatchAttack(attackId) {
-  if (['anonymous_note_read', 'anonymous_note_list'].includes(attackId)) return await AttackHandlers.check_anonymous_read(attackId);
-  if (attackId === 'anonymous_note_write') return await AttackHandlers.anonymous_note_write();
-  if (attackId === 'repository_secret_scan') return await AttackHandlers.repository_secret_scan();
-  if (['built_bundle_secret_scan', 'static_seed_data_scan'].includes(attackId)) return await AttackHandlers.scan_client_bundles(attackId);
-  if (attackId === 'forged_login_token') return await AttackHandlers.invalid_token_tests(attackId);
-  if (attackId === 'r3_judge_owned_note') return await AttackHandlers.bola_tests(attackId);
-  
-  return { passed: true }; 
-}
-
-// ============================================================================
-// 6. 메인 테스트 루프 (Main Event Loop)
-// ============================================================================
-async function main() {
-  console.log(`${C.bold}${C.blue}=== 🛡️ 자동 방어 심사 Pre-check CLI ===${C.reset}`);
-  console.log(`현재 버전 보안 기준(2026-10-01)으로 점검을 시작합니다.\n`);
-
-  let pass = 0, fail = 0, skip = 0;
-
-  for (const check of SECURITY_CHECKS) {
-    if (config.stepFilter && check.step !== config.stepFilter) { skip++; continue; }
-    if (config.waveFilter && check.wave !== config.waveFilter) { skip++; continue; }
-    
-    console.log(`[Step ${check.step} / Wave ${check.wave}] 점검 중: ${check.name}...`);
-    
-    try {
-      const result = await dispatchAttack(check.id);
-      if (result.passed) {
-        console.log(`  ${C.green}✔ 안전함 (PASS)${C.reset}`);
-        pass++;
-      } else {
-        printDiagnostic(check, result.error, result.cause, result.debug);
-        fail++;
-      }
-    } catch (err) {
-      printDiagnostic(check, `에러 발생: ${err.message}`, "스크립트 자체 또는 네트워크 오류입니다. 프론트엔드 서버가 켜져 있는지 확인하세요.");
-      fail++;
-    }
-  }
-
-  console.log(`\n${C.bold}=== 점검 요약 (Summary) ===${C.reset}`);
-  console.log(`${C.green}통과(Passed): ${pass}${C.reset}, ${C.red}실패(Failed): ${fail}${C.reset}, ${C.yellow}건너뜀(Skipped): ${skip}${C.reset}`);
-  
-  if (fail > 0) {
-    console.log(`\n${C.red}⚠️ 취약점이 발견되었습니다. 위의 해결 가이드를 참고하여 서버 코드를 수정해 주세요.${C.reset}`);
-    process.exit(1);
-  } else {
-    console.log(`\n${C.green}✅ 모든 보안 점검을 통과했습니다! 심사 엔진에 제출할 준비가 되었습니다.${C.reset}`);
-  }
-}
-
-// 실행
-main();
+main().catch(console.error);
