@@ -4,6 +4,20 @@ import { parseArgs } from 'node:util';
 import { testRegistry, setupHooks } from './test_runner/core/runner.mjs';
 import { SecurityAssertError } from './test_runner/core/client.mjs';
 
+// Load .env file automatically if it exists (No external dotenv dependency needed)
+if (fs.existsSync('.env')) {
+  const envData = fs.readFileSync('.env', 'utf8');
+  for (const line of envData.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      const [key, ...rest] = trimmed.split('=');
+      if (key && rest.length && !process.env[key.trim()]) {
+        process.env[key.trim()] = rest.join('=').trim().replace(/^['"]|['"]$/g, '');
+      }
+    }
+  }
+}
+
 const options = {
   url: { type: 'string' },
   tokenA: { type: 'string' },

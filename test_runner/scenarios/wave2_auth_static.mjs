@@ -24,8 +24,12 @@ testScenario('Wave 2', 'anonymous_note_write', '무인증 생성/수정 요청 �
 });
 
 testScenario('Wave 2', 'anonymous_note_list', '인증 없이 목록 및 카운트 누출 차단', async () => {
+  const note = await seeder.createTestNote(auth.getTokenA(), { content: 'Should Not Leak' });
   const res = await apiClient.fetchApi('GET', '/api/notes', null);
   apiClient.assertStatus(res.status, [401, 403], '무인증 상태에서의 목록 및 데이터 카운트 조회는 차단되어야 합니다.');
+  if (res.data && JSON.stringify(res.data).includes(note.id)) {
+    throw new Error('무인증 응답에 리소스 데이터가 누출되었습니다.');
+  }
 });
 
 // ==========================================

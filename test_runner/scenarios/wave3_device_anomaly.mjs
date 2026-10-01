@@ -38,18 +38,32 @@ for (const s of DEVICE_SCENARIOS) {
 testScenario('Wave 3', 'anomalous_network_action', '낯선 네트워크 대량 수정 시 차단/추가 검증', async () => {
   const token = auth.getTokenA();
   // 여러 개의 실제 리소스를 생성
-  const n1 = await seeder.createTestNote(token, { title: 'Bulk 1' });
-  const n2 = await seeder.createTestNote(token, { title: 'Bulk 2' });
+  const n1 = await seeder.createTestNote(token, { content: 'Bulk 1' });
+  const n2 = await seeder.createTestNote(token, { content: 'Bulk 2' });
   
   // 한 번에 대량의 리소스를 비정상 헤더와 함께 삭제 시도
-  const res = await apiClient.fetchApi('DELETE', '/api/notes/bulk', token, { ids: [n1.id, n2.id] }, { 'User-Agent': 'Scraper-Bot/1.0' });
+  const res = await apiClient.fetchApi('DELETE', '/api/notes/bulk', token, { ids: [n1.id, n2.id] }, { 'X-Forwarded-For': '199.99.99.99' });
   apiClient.assertStatus(res.status, [401, 403, 428, 429], '비정상 대량 삭제 요청은 임계치 통제에 의해 방어되어야 합니다.');
+  
+  // 무결성 교차 검증 (삭제되지 않아야 함)
+  const verifyRes1 = await apiClient.fetchApi('GET', `/api/notes/${n1.id}`, token);
+  apiClient.assertImmutable(n1, verifyRes1.data, ['content']);
+  
+  const verifyRes2 = await apiClient.fetchApi('GET', `/api/notes/${n2.id}`, token);
+  apiClient.assertImmutable(n2, verifyRes2.data, ['content']);
 });
 
 testScenario('Wave 3', 'missing_step_up', '2차 인증(MFA/Step-up) 누락 시 민감 리소스 접근 거부', async () => {
-  // 일반적인 리소스 생성 후 민감한 "결제/권한" 엔드포인트 타격
-  const res = await apiClient.fetchApi('POST', '/api/billing/upgrade', auth.getTokenA());
-  apiClient.assertStatus(res.status, [401, 403, 428], '결제/승격 등 민감 액션은 MFA(Step-up) 검증 단계가 필수적입니다.');
+  const token = auth.getTokenA();
+  const note = await seeder.createTestNote(token, { content: 'Sensitive MFA Protected Data' });
+  
+  // 2차 인증 토큰 누락을 가정한 상태로 수정 시도
+  const res = await apiClient.fetchApi('PUT', `/api/notes/${note.id}`, token, { content: 'Hacked without MFA' }, { 'X-MFA-Token': '' });
+  apiClient.assertStatus(res.status, [401, 403, 428], 'MFA 토큰이 누락된 보호된 액션은 거부되어야 합니다.');
+  
+  // 무결성 검증 (데이터가 수정되지 않아야 함)
+  const verifyRes = await apiClient.fetchApi('GET', `/api/notes/${note.id}`, token);
+  apiClient.assertImmutable(note, verifyRes.data, ['content']);
 });
 
 // ==========================================

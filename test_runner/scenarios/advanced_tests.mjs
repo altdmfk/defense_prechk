@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { SecurityAssertError } from '../core/client.mjs';
 
 import { apiClient, auth, seeder } from '../core/shared.mjs';
-const HMAC_SECRET = process.env.HMAC_SECRET || 'test-super-secret-key';
+const HMAC_SECRET = process.env.HMAC_SECRET || 'dummy_secret';
 
 testScenario('Wave 4', 'restore_changed_note', '복구 엔드포인트 호출 시 원본 무결성 검증', async () => {
   const original = "Original";
@@ -47,21 +47,50 @@ testScenario('Wave 4', 'restore_defense_replay', '복구 후 이전 단계 대�
 });
 
 testScenario('Wave 4', 'unsigned_client_request', '서명 없는 클라이언트 보호 요청 거부', async () => {
-  const res = await apiClient.fetchApi('POST', '/api/protected/action', auth.getTokenA(), { data: 1 }, { 'X-Signature': '' });
+  const note = await seeder.createTestNote(auth.getTokenA(), { content: 'Valid Original Content' });
+  const unsignedBody = { content: 'Hacked without signature' };
+  const res = await apiClient.fetchApi('PUT', `/api/notes/${note.id}`, auth.getTokenA(), unsignedBody, { 'X-Signature': '' });
   apiClient.assertStatus(res.status, [400, 401, 403], '서명 누락 시 요청이 거부되어야 합니다.');
+
+  const verifyRes = await apiClient.fetchApi('GET', `/api/notes/${note.id}`, auth.getTokenA());
+  apiClient.assertImmutable(note, verifyRes.data, ['content']);
 });
 
 testScenario('Wave 4', 'signed_path_tamper', '서명 후 URL 경로 변조 감지', async () => {
-  const body = { secure: true };
-  const hmac = crypto.createHmac('sha256', HMAC_SECRET).update(`POST:/api/protected/v1:${JSON.stringify(body)}`).digest('hex');
-  const res = await apiClient.fetchApi('POST', '/api/protected/v2_tampered', auth.getTokenA(), body, { 'X-Signature': hmac });
+  const note = await seeder.createTestNote(auth.getTokenA(), { content: 'Valid Original Content' });
+  const otherNote = await seeder.createTestNote(auth.getTokenA(), { content: 'Other Target' });
+
+  // Generate valid HMAC for updating note
+  const validBody = { content: 'Updated by Valid Signature' };
+  const hmac = crypto.createHmac('sha256', HMAC_SECRET)
+                     .update(`PUT:/api/notes/${note.id}:${JSON.stringify(validBody)}`)
+                     .digest('hex');
+  
+  // Attacker uses note's signature but changes URL to target otherNote
+  const res = await apiClient.fetchApi('PUT', `/api/notes/${otherNote.id}`, auth.getTokenA(), validBody, { 'X-Signature': hmac });
   apiClient.assertStatus(res.status, [400, 401, 403], '경로 변조는 서명 불일치로 거절되어야 합니다.');
+
+  // Verify otherNote is intact
+  const verifyRes = await apiClient.fetchApi('GET', `/api/notes/${otherNote.id}`, auth.getTokenA());
+  apiClient.assertImmutable(otherNote, verifyRes.data, ['content']);
 });
 
 testScenario('Wave 4', 'signed_body_tamper', '서명 후 페이로드 변조 감지', async () => {
-  const validBody = { role: 'user' };
-  const hmac = crypto.createHmac('sha256', HMAC_SECRET).update(`PUT:/api/settings:${JSON.stringify(validBody)}`).digest('hex');
-  const tamperedBody = { role: 'admin' };
-  const res = await apiClient.fetchApi('PUT', '/api/settings', auth.getTokenA(), tamperedBody, { 'X-Signature': hmac });
-  apiClient.assertStatus(res.status, [400, 401, 403], '바디 변조는 서명 불일치로 거절되어야 합니다.');
+  // 1. Create a REAL target resource
+  const note = await seeder.createTestNote(auth.getTokenA(), { content: 'Valid Original Content' });
+  
+  // 2. Generate valid HMAC for a PUT request
+  const validBody = { content: 'Updated by Valid Signature' };
+  const hmac = crypto.createHmac('sha256', HMAC_SECRET)
+                     .update(`PUT:/api/notes/${note.id}:${JSON.stringify(validBody)}`)
+                     .digest('hex');
+  
+  // 3. Attacker alters ONLY the body, keeps the original signature
+  const tamperedBody = { content: 'Updated by Attacker (Tampered)' };
+  const res = await apiClient.fetchApi('PUT', `/api/notes/${note.id}`, auth.getTokenA(), tamperedBody, { 'X-Signature': hmac });
+  apiClient.assertStatus(res.status, [400, 401, 403], 'Tampered payload must be strictly rejected');
+  
+  // 4. VERIFY IMMUTABILITY: The original data MUST remain intact
+  const verifyRes = await apiClient.fetchApi('GET', `/api/notes/${note.id}`, auth.getTokenA());
+  apiClient.assertImmutable(note, verifyRes.data, ['content']);
 });
